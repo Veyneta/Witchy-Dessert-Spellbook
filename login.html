@@ -44,17 +44,100 @@
 
     <script src="auth.js"></script>
     <script>
+        let lockoutTimer = null;
+
+        // Check if account is locked on page load
+        window.addEventListener('DOMContentLoaded', function() {
+            const usernameInput = document.getElementById('username');
+
+            usernameInput.addEventListener('input', function() {
+                const username = usernameInput.value;
+                if (username) {
+                    checkAccountStatus(username);
+                }
+            });
+        });
+
+        function checkAccountStatus(username) {
+            const lockStatus = isAccountLocked(username);
+            const errorMsg = document.getElementById('errorMessage');
+            const submitBtn = document.querySelector('.login-submit-btn');
+
+            if (lockStatus.locked) {
+                errorMsg.textContent = `Account is locked. Please try again in ${lockStatus.remainingMinutes} minutes.`;
+                errorMsg.style.display = 'block';
+                errorMsg.style.color = '#f44336';
+                submitBtn.disabled = true;
+                submitBtn.style.opacity = '0.5';
+                submitBtn.style.cursor = 'not-allowed';
+
+                // Start countdown timer
+                startLockoutTimer(username, lockStatus.remainingTime);
+            } else {
+                errorMsg.style.display = 'none';
+                submitBtn.disabled = false;
+                submitBtn.style.opacity = '1';
+                submitBtn.style.cursor = 'pointer';
+                if (lockoutTimer) {
+                    clearInterval(lockoutTimer);
+                }
+            }
+        }
+
+        function startLockoutTimer(username, remainingTime) {
+            if (lockoutTimer) {
+                clearInterval(lockoutTimer);
+            }
+
+            lockoutTimer = setInterval(function() {
+                const lockStatus = isAccountLocked(username);
+                const errorMsg = document.getElementById('errorMessage');
+                const submitBtn = document.querySelector('.login-submit-btn');
+
+                if (!lockStatus.locked) {
+                    errorMsg.textContent = 'Lockout period has ended. You can try logging in again.';
+                    errorMsg.style.color = '#4CAF50';
+                    setTimeout(function() {
+                        errorMsg.style.display = 'none';
+                    }, 3000);
+                    submitBtn.disabled = false;
+                    submitBtn.style.opacity = '1';
+                    submitBtn.style.cursor = 'pointer';
+                    clearInterval(lockoutTimer);
+                } else {
+                    const minutes = Math.floor(lockStatus.remainingTime / (60 * 1000));
+                    const seconds = Math.floor((lockStatus.remainingTime % (60 * 1000)) / 1000);
+                    errorMsg.textContent = `Account is locked. Please try again in ${minutes}m ${seconds}s.`;
+                }
+            }, 1000);
+        }
+
         document.getElementById('loginForm').addEventListener('submit', function(e) {
             e.preventDefault();
             const username = document.getElementById('username').value;
             const password = document.getElementById('password').value;
-            
-            if (login(username, password)) {
+            const errorMsg = document.getElementById('errorMessage');
+
+            const result = login(username, password);
+
+            if (result.success) {
                 window.location.href = 'admin.html';
             } else {
-                const errorMsg = document.getElementById('errorMessage');
-                errorMsg.textContent = 'Invalid username or password!';
+                errorMsg.textContent = result.message;
                 errorMsg.style.display = 'block';
+
+                if (result.locked) {
+                    errorMsg.style.color = '#f44336';
+                    const submitBtn = document.querySelector('.login-submit-btn');
+                    submitBtn.disabled = true;
+                    submitBtn.style.opacity = '0.5';
+                    submitBtn.style.cursor = 'not-allowed';
+
+                    // Start countdown timer
+                    startLockoutTimer(username, LOCKOUT_DURATION);
+                } else {
+                    errorMsg.style.color = '#ff9800';
+                }
             }
         });
     </script>

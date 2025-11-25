@@ -4,6 +4,10 @@ const ADMIN_PASSWORD = 'magic123';
 const AUTH_KEY = 'magicalRecipeAuth';
 const CURRENT_USER_KEY = 'magicalRecipeCurrentUser';
 const USERS_KEY = 'magicalRecipeUsers';
+const LOGIN_ATTEMPTS_KEY = 'magicalRecipeLoginAttempts';
+const LOCKOUT_TIME_KEY = 'magicalRecipeLockoutTime';
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOCKOUT_DURATION = 30 * 60 * 1000; // 30 minutes in milliseconds
 
 // Initialize default admin user
 function initializeUsers() {
@@ -94,16 +98,128 @@ function register(username, password, email) {
     return { success: true, message: 'Registration successful! You can now login.' };
 }
 
+// Get login attempts for a username
+function getLoginAttempts(username) {
+    const attemptsJson = localStorage.getItem(LOGIN_ATTEMPTS_KEY);
+    const attempts = attemptsJson ? JSON.parse(attemptsJson) : {};
+    return attempts[username] || { count: 0, lastAttempt: null };
+}
+
+// Save login attempts for a username
+function saveLoginAttempts(username, count) {
+    const attemptsJson = localStorage.getItem(LOGIN_ATTEMPTS_KEY);
+    const attempts = attemptsJson ? JSON.parse(attemptsJson) : {};
+    attempts[username] = {
+        count: count,
+        lastAttempt: new Date().toISOString()
+    };
+    localStorage.setItem(LOGIN_ATTEMPTS_KEY, JSON.stringify(attempts));
+}
+
+// Clear login attempts for a username
+function clearLoginAttempts(username) {
+    const attemptsJson = localStorage.getItem(LOGIN_ATTEMPTS_KEY);
+    const attempts = attemptsJson ? JSON.parse(attemptsJson) : {};
+    delete attempts[username];
+    localStorage.setItem(LOGIN_ATTEMPTS_KEY, JSON.stringify(attempts));
+}
+
+// Get lockout time for a username
+function getLockoutTime(username) {
+    const lockoutJson = localStorage.getItem(LOCKOUT_TIME_KEY);
+    const lockouts = lockoutJson ? JSON.parse(lockoutJson) : {};
+    return lockouts[username] || null;
+}
+
+// Set lockout time for a username
+function setLockoutTime(username) {
+    const lockoutJson = localStorage.getItem(LOCKOUT_TIME_KEY);
+    const lockouts = lockoutJson ? JSON.parse(lockoutJson) : {};
+    lockouts[username] = new Date().getTime();
+    localStorage.setItem(LOCKOUT_TIME_KEY, JSON.stringify(lockouts));
+}
+
+// Clear lockout time for a username
+function clearLockoutTime(username) {
+    const lockoutJson = localStorage.getItem(LOCKOUT_TIME_KEY);
+    const lockouts = lockoutJson ? JSON.parse(lockoutJson) : {};
+    delete lockouts[username];
+    localStorage.setItem(LOCKOUT_TIME_KEY, JSON.stringify(lockouts));
+}
+
+// Check if account is locked out
+function isAccountLocked(username) {
+    const lockoutTime = getLockoutTime(username);
+    if (!lockoutTime) return { locked: false };
+
+    const currentTime = new Date().getTime();
+    const timePassed = currentTime - lockoutTime;
+
+    if (timePassed >= LOCKOUT_DURATION) {
+        // Lockout period has passed, clear the lockout
+        clearLockoutTime(username);
+        clearLoginAttempts(username);
+        return { locked: false };
+    }
+
+    const remainingTime = LOCKOUT_DURATION - timePassed;
+    const remainingMinutes = Math.ceil(remainingTime / (60 * 1000));
+    return {
+        locked: true,
+        remainingMinutes: remainingMinutes,
+        remainingTime: remainingTime
+    };
+}
+
 // Login function
 function login(username, password) {
+    // Check if account is locked
+    const lockStatus = isAccountLocked(username);
+    if (lockStatus.locked) {
+        return {
+            success: false,
+            locked: true,
+            message: `Account is locked. Please try again in ${lockStatus.remainingMinutes} minutes.`,
+            remainingMinutes: lockStatus.remainingMinutes
+        };
+    }
+
     const users = getUsers();
     const user = users.find(u => u.username === username && u.password === password);
-    
+
     if (user) {
+        // Successful login - clear attempts
+        clearLoginAttempts(username);
+        clearLockoutTime(username);
         setCurrentUser(user);
-        return true;
+        return { success: true };
+    } else {
+        // Failed login - increment attempts
+        const attempts = getLoginAttempts(username);
+        const newAttemptCount = attempts.count + 1;
+
+        if (newAttemptCount >= MAX_LOGIN_ATTEMPTS) {
+            // Lock the account
+            setLockoutTime(username);
+            saveLoginAttempts(username, newAttemptCount);
+            return {
+                success: false,
+                locked: true,
+                message: `Too many failed attempts. Account locked for 30 minutes.`,
+                remainingMinutes: 30
+            };
+        } else {
+            // Save the attempt
+            saveLoginAttempts(username, newAttemptCount);
+            const attemptsLeft = MAX_LOGIN_ATTEMPTS - newAttemptCount;
+            return {
+                success: false,
+                locked: false,
+                message: `Invalid username or password! ${attemptsLeft} attempt${attemptsLeft !== 1 ? 's' : ''} remaining.`,
+                attemptsLeft: attemptsLeft
+            };
+        }
     }
-    return false;
 }
 
 // Logout function
